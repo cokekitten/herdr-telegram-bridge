@@ -1,0 +1,5 @@
+__pycache__/
+config.toml
+*.log
+last_sent.json
+last_status.json

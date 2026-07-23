@@ -1,0 +1,26 @@
+# Copy to the plugin config dir (herdr plugin config-dir tg.notify) as config.toml.
+
+# From @BotFather
+bot_token = "REPLACE_ME:token"
+# Your numeric chat id (message @userinfobot, or getUpdates)
+chat_id = "REPLACE_ME"
+
+# Agent statuses that trigger a push: done, blocked, idle, working, unknown.
+# "done" = finished; "blocked" = waiting for your input.
+statuses = ["done", "blocked"]
+
+# Only notify for these agents (herdr agent ids, e.g. "claude", "codex").
+# Empty or omitted = all agents.
+# agents = ["claude"]
+
+# Skip repeat pushes for the same pane+status within this many seconds.
+quiet_seconds = 5
+
+# Max characters of the agent's final reply included in the message.
+snippet_chars = 150
+
+# Optional: proxy for reaching api.telegram.org, e.g. "http://127.0.0.1:7890"
+# proxy = ""
+
+# Optional: alternative API endpoint (reverse proxy of api.telegram.org)
+# api_base = "https://api.telegram.org"

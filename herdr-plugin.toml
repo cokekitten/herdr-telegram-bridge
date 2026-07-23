@@ -1,0 +1,16 @@
+id = "tg.notify"
+name = "Telegram Notify"
+version = "0.1.0"
+min_herdr_version = "0.7.0"
+description = "Push a Telegram message when an agent reaches done/blocked."
+platforms = ["macos", "linux"]
+
+[[events]]
+on = "pane.agent_status_changed"
+command = ["python3", "notify.py"]
+
+[[actions]]
+id = "test"
+title = "Send Telegram test message"
+contexts = ["pane", "workspace"]
+command = ["python3", "notify.py", "--test"]
