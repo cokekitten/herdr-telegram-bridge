@@ -29,7 +29,7 @@ Agents not listed still get notifications — just without the 💬 line.
 ## Install
 
 ```sh
-herdr plugin install <OWNER>/herdr-tg-notify
+herdr plugin install cokekitten/herdr-tg-notify
 ```
 
 Or link a local checkout while developing:
