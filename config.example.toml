@@ -1,4 +1,4 @@
-# Copy to the plugin config dir (herdr plugin config-dir tg.notify) as config.toml.
+# Copy to the plugin config dir (herdr plugin config-dir telegram.bridge) as config.toml.
 
 # From @BotFather
 bot_token = "REPLACE_ME:token"

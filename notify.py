@@ -324,7 +324,7 @@ def main() -> None:
         if cfg is None:
             print(f"config.toml not found in {tg.CONFIG_DIR}", file=sys.stderr)
             sys.exit(1)
-        send_message(cfg, "tg.notify test message from herdr 🔔")
+        send_message(cfg, "telegram.bridge test message from herdr 🔔")
         ensure_bot(cfg)
         return
 

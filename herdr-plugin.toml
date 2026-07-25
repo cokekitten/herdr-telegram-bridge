@@ -1,8 +1,8 @@
-id = "tg.notify"
-name = "Telegram Notify"
-version = "0.2.0"
+id = "telegram.bridge"
+name = "Telegram Bridge"
+version = "0.3.0"
 min_herdr_version = "0.7.0"
-description = "Telegram push when an agent is done or blocked — reply to it and your text goes back into the agent."
+description = "Drive your herdr agents from Telegram: push on done/blocked, reply to send text or files straight back in."
 platforms = ["macos", "linux"]
 
 # Starts the reply poller with herdr. It spawns a detached process and returns

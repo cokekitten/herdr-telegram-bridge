@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Shared plumbing for the tg.notify plugin.
+"""Shared plumbing for the telegram.bridge plugin.
 
 Imported by notify.py (the status-change hook) and bot.py (the reply poller):
 plugin paths, logging, config, the Telegram API call, the herdr CLI call, and the
@@ -21,7 +21,7 @@ import urllib.request
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 STATE_DIR = os.environ.get("HERDR_PLUGIN_STATE_DIR") or PLUGIN_DIR
 CONFIG_DIR = os.environ.get("HERDR_PLUGIN_CONFIG_DIR") or PLUGIN_DIR
-LOG_PATH = os.path.join(STATE_DIR, "notify.log")
+LOG_PATH = os.path.join(STATE_DIR, "bridge.log")
 LOG_MAX_BYTES = 2_000_000
 
 STATUS_EMOJI = {"done": "✅", "blocked": "❓", "idle": "💤", "working": "⏳", "unknown": "❔"}

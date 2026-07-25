@@ -1,4 +1,4 @@
-# herdr-tg-notify
+# herdr-telegram-bridge
 
 A [Herdr](https://herdr.dev) plugin that pushes a Telegram message when an AI agent finishes (`done`) or needs your input (`blocked`) — and lets you reply to that message to send text straight back into the agent.
 
@@ -52,13 +52,13 @@ Agents not listed still get notifications — just without the reply body. Reply
 ## Install
 
 ```sh
-herdr plugin install cokekitten/herdr-tg-notify
+herdr plugin install cokekitten/herdr-telegram-bridge
 ```
 
 Or link a local checkout while developing:
 
 ```sh
-herdr plugin link /path/to/herdr-tg-notify
+herdr plugin link /path/to/herdr-telegram-bridge
 ```
 
 No Herdr restart needed — plugins hot-load.
@@ -68,7 +68,7 @@ No Herdr restart needed — plugins hot-load.
 Create a bot with [@BotFather](https://t.me/BotFather), send your bot any message, then get your chat id from `https://api.telegram.org/bot<TOKEN>/getUpdates`.
 
 ```sh
-cp config.example.toml "$(herdr plugin config-dir tg.notify)/config.toml"
+cp config.example.toml "$(herdr plugin config-dir telegram.bridge)/config.toml"
 # then edit bot_token / chat_id
 ```
 
@@ -79,7 +79,7 @@ Turn off privacy mode for your bot in @BotFather (`/setprivacy` → Disable) if 
 Test it:
 
 ```sh
-cd "$(herdr plugin config-dir tg.notify)/.." && herdr plugin action invoke tg.notify.test
+cd "$(herdr plugin config-dir telegram.bridge)/.." && herdr plugin action invoke telegram.bridge.test
 ```
 
 or run the "Send Telegram test message" action from Herdr's plugin action menu.
@@ -102,7 +102,7 @@ On its very first run the poller skips whatever Telegram already has queued (the
 
 - Herdr only reports `done` for unfocused panes (attention semantics); a focused pane goes `working → idle` directly. The plugin tracks per-pane state and treats `working → idle` as a completion too, so you get notified either way.
 - Requires Python 3.11+ (`tomllib`) and `curl`.
-- Logs: `herdr plugin logs --plugin tg.notify`, plus `notify.log` in the plugin state dir (which also holds the poller's log).
+- Logs: `herdr plugin logs --plugin telegram.bridge`, plus `bridge.log` in the plugin state dir (which also holds the poller's log).
 
 ## License
 
