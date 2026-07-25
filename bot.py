@@ -19,6 +19,7 @@ import signal
 import sys
 import time
 
+import notify
 import tg
 
 OFFSET = "bot_offset.json"
@@ -75,7 +76,7 @@ def button_label(cfg: dict, agent: dict, target: dict) -> str:
     its last segment: the buttons are read on a phone."""
     emoji = tg.STATUS_EMOJI.get(agent.get("agent_status", ""), "❔")
     where = os.path.basename(target["folder"].rstrip("/")) or target["folder"]
-    title = (agent.get("terminal_title_stripped") or agent.get("terminal_title") or "").strip()
+    title = notify.display_title(agent, agent.get("agent") or "", agent.get("pane_id") or "")
     limit = int(cfg.get("button_title_chars", 32))
     if len(title) > limit:
         title = title[:limit].rstrip() + "…"

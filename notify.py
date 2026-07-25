@@ -53,15 +53,26 @@ def session_file(agent: str, session: dict) -> str:
     return ""
 
 
+TEXT_PARTS = ("text", "output_text", "input_text")  # codex writes user text as input_text
+
+
 def _texts_from_content(content) -> str:
     if isinstance(content, str):
         return content
     if isinstance(content, list):
         return "\n".join(
             c["text"] for c in content
-            if isinstance(c, dict) and c.get("type") in ("text", "output_text") and c.get("text")
+            if isinstance(c, dict) and c.get("type") in TEXT_PARTS and c.get("text")
         )
     return ""
+
+
+def _head_lines(path: str, max_bytes: int = 600_000) -> list:
+    try:
+        with open(path, "rb") as f:
+            return f.read(max_bytes).decode("utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
 
 
 def _tail_lines(path: str, max_bytes: int = 2_000_000) -> list:
@@ -240,6 +251,62 @@ def last_reply_opencode(session_id: str) -> str:
     except Exception as e:
         tg.log(f"opencode db read failed: {e!r}")
     return ""
+
+
+# Agents front-load synthetic context as "user" messages — an AGENTS.md dump, a
+# <user_info> block — before anything the human said.
+SYNTHETIC = ("<instructions>", "<user_info>", "<system-reminder>", "<environment", "agents.md")
+
+
+def first_prompt(agent: str, session: dict, cwd: str, pane_id: str = "") -> str:
+    """The first thing the human actually typed in this session, or ""."""
+    if agent == "grok":
+        found = grok_session_dir(pane_id, cwd)
+        path = os.path.join(found, "chat_history.jsonl") if found else ""
+    else:
+        path = session_file(agent, session)
+    if not path:
+        return ""
+    for ln in _head_lines(path):
+        try:
+            o = json.loads(ln)
+        except Exception:
+            continue
+        text = ""
+        if o.get("type") == "user" and "message" not in o:  # grok's shape
+            text = _texts_from_content(o.get("content"))
+        else:
+            for holder in (o.get("message"), o.get("payload"), o):
+                if isinstance(holder, dict) and holder.get("role") == "user":
+                    text = _texts_from_content(holder.get("content"))
+                    break
+        text = " ".join(text.split())
+        head = text[:200].lower()
+        if not text or text[0] in "<#" or any(s in head for s in SYNTHETIC):
+            continue
+        return text
+    return ""
+
+
+def uninformative(title: str, cwd: str, agent: str) -> bool:
+    """Is herdr's terminal title just a banner? Some CLIs never set a real one: pi shows
+    "π - <user>", a fresh Claude Code shows its own name, codex shows the directory."""
+    t = title.strip().lower()
+    if not t or t.startswith("π"):
+        return True
+    base = os.path.basename((cwd or "").rstrip("/")).lower()
+    user = os.path.basename(os.path.expanduser("~")).lower()
+    return t in (base, user, agent.lower(), "claude code", "codex", "pi", "grok")
+
+
+def display_title(info: dict, agent: str, pane_id: str = "") -> str:
+    """A title worth showing: herdr's, or the session's opening prompt when herdr's says
+    nothing. A pane with no conversation yet legitimately has neither."""
+    title = (info.get("terminal_title_stripped") or info.get("terminal_title") or "").strip()
+    cwd = info.get("cwd") or info.get("foreground_cwd") or ""
+    if uninformative(title, cwd, agent):
+        return first_prompt(agent, info.get("agent_session") or {}, cwd, pane_id) or title
+    return title
 
 
 def reply_snippet(agent: str, session: dict, cwd: str, pane_id: str = "") -> str:
@@ -438,7 +505,7 @@ def main() -> None:
     info = agent_info(pane_id)
     cwd = info.get("cwd") or info.get("foreground_cwd") or ""
     folder = tg.short_home(cwd)
-    title = info.get("terminal_title_stripped") or title
+    title = display_title(info, event.get("agent") or "", pane_id) or title
     reply = tidy(reply_snippet(event.get("agent") or "", info.get("agent_session") or {},
                                cwd, pane_id))
 
