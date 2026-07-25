@@ -41,7 +41,7 @@ No relay server, no tunnel, no port to open, no companion app. The plugin makes 
 
 | | |
 |---|---|
-| `/agents` | every agent as a button — status, agent, directory and pane title, because agents often share a directory and the title is what tells them apart |
+| `/agents` | every agent as a button, grouped under its working directory, most recently active group first — with status, agent and pane title, because agents often share a directory and the title is what tells them apart |
 | `/read [lines]` | that agent's recent terminal output |
 | `/esc` | send Escape to interrupt it |
 | `/help` | how replying works |

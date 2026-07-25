@@ -27,6 +27,7 @@ POLL_SECONDS = 50
 MAX_BUTTONS = 12
 TELEGRAM_TEXT_LIMIT = 3500  # the API caps at 4096; leave room for our own prefix
 SWEEP_EVERY = 6 * 3600      # how often the inbox is checked for expired files
+HEADER = "dir:"             # callback_data prefix marking a label-only row
 
 HELP = (
     "Reply to any of my notifications and I'll send that text to the agent it came from.\n"
@@ -69,21 +70,51 @@ def target_from_agent(agent: dict) -> dict:
     }
 
 
-def button_label(cfg: dict, agent: dict, target: dict) -> str:
+def button_label(cfg: dict, agent: dict, target: dict, with_folder: bool = True) -> str:
     """Label for an /agents button. Several agents routinely share a working directory,
-    so the pane title is the only thing telling them apart — but a title is sometimes
-    just the folder name or a generic banner, so the directory has to stay too. Only
-    its last segment: the buttons are read on a phone."""
+    so the pane title is what tells them apart — but a title is sometimes just the folder
+    name or a generic banner, so the directory earns its place too. Only its last
+    segment: the buttons are read on a phone. Under a directory header it is dropped."""
     emoji = tg.STATUS_EMOJI.get(agent.get("agent_status", ""), "❔")
     where = os.path.basename(target["folder"].rstrip("/")) or target["folder"]
     title = notify.display_title(agent, agent.get("agent") or "", agent.get("pane_id") or "")
     limit = int(cfg.get("button_title_chars", 32))
     if len(title) > limit:
         title = title[:limit].rstrip() + "…"
-    parts = [f"{emoji} {target['agent']}", where]
+    parts = [f"{emoji} {target['agent']}"]
+    if with_folder and where:
+        parts.append(where)
     if title and title != where:
         parts.append(title)
     return " · ".join(p for p in parts if p)
+
+
+def header_data(folder: str) -> str:
+    """callback_data for a directory header. Capped at Telegram's 64 bytes, cutting on a
+    byte boundary that keeps the string decodable."""
+    return (HEADER + folder).encode()[:64].decode(errors="ignore")
+
+
+def agent_keyboard(cfg: dict, agents: list) -> list:
+    """Rows grouped by working directory, most recently active group first.
+
+    A keyboard has no way to render a heading between rows, so each group opens with a
+    button that is only a label — tapping it just names the directory back.
+    """
+    groups: dict[str, list] = {}
+    for a in agents:
+        target = target_from_agent(a)
+        groups.setdefault(target["folder"], []).append((a, target))
+    order = sorted(groups.items(),
+                   key=lambda kv: -max(a.get("state_change_seq", 0) for a, _ in kv[1]))
+    rows = []
+    for folder, members in order:
+        members.sort(key=lambda m: m[0].get("state_change_seq", 0), reverse=True)
+        rows.append([{"text": f"📁 {folder or '?'}", "callback_data": header_data(folder)}])
+        for a, target in members:
+            rows.append([{"text": button_label(cfg, a, target, with_folder=False),
+                          "callback_data": target["pane"]}])
+    return rows
 
 
 def agent_status(pane: str) -> str:
@@ -184,12 +215,9 @@ def handle_command(cfg: dict, chat: int, msg_id, text: str, target: dict) -> Non
             say(cfg, chat, "🫙 no agents running", reply_to=msg_id)
             return
         agents.sort(key=lambda a: a.get("state_change_seq", 0), reverse=True)
-        rows = []
-        for a in agents[:MAX_BUTTONS]:
-            t = target_from_agent(a)
-            rows.append([{"text": button_label(cfg, a, t), "callback_data": t["pane"]}])
-        extra = "" if len(agents) <= MAX_BUTTONS else f"\n(+{len(agents) - MAX_BUTTONS} more)"
-        say(cfg, chat, f"🤖 pick an agent{extra}", reply_to=msg_id, markup={"inline_keyboard": rows})
+        shown, extra = agents[:MAX_BUTTONS], len(agents) - MAX_BUTTONS
+        say(cfg, chat, "🤖 pick an agent" + (f"\n(+{extra} more)" if extra > 0 else ""),
+            reply_to=msg_id, markup={"inline_keyboard": agent_keyboard(cfg, shown)})
         return
 
     if not target.get("pane"):
@@ -321,6 +349,10 @@ def handle_callback(cfg: dict, query: dict) -> None:
         tg.log(f"bot: ignoring callback from chat={chat}")
         return
     pane = query.get("data", "")
+    if pane.startswith(HEADER):  # a directory heading, not an agent
+        tg.api(cfg, "answerCallbackQuery",
+               {"callback_query_id": query.get("id"), "text": pane[len(HEADER):] or "directory"})
+        return
     result, err = tg.herdr_json("agent", "get", pane)
     agent = result.get("agent", {})
     if err or not agent:
