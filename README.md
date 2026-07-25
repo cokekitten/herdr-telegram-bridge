@@ -56,7 +56,7 @@ No relay server, no tunnel, no port to open, no companion app. The plugin makes 
 | codex | `~/.codex/sessions/…/rollout-*.jsonl` |
 | pi | session path reported by herdr |
 | opencode | `~/.local/share/opencode/opencode.db` |
-| grok | `~/.grok/sessions/<cwd>/…/chat_history.jsonl` |
+| grok | `~/.grok/sessions/<cwd>/…/chat_history.jsonl`, session pinned via the pane's process |
 | kimi (Kimi Code) | `~/.kimi-code/sessions/…/wire.jsonl` |
 | hermes | `~/.hermes/state.db` |
 
@@ -86,7 +86,7 @@ Then send a test message — either the **Send Telegram test message** action in
 herdr plugin action invoke telegram.bridge.test
 ```
 
-Everything else has a working default. [`config.example.toml`](config.example.toml) documents the full set: which `statuses` notify, an `agents` filter, `quiet_seconds`, `snippet_chars`, `markdown` / `fold` / `max_messages`, `replies` / `reply_to_latest` / `allowed_user_ids` / `read_lines`, `accept_files` / `inbox_days` / `max_file_mb`, and `proxy` / `api_base` if you need to reach Telegram through something else.
+Everything else has a working default. [`config.example.toml`](config.example.toml) documents the full set: which `statuses` notify, an `agents` filter, `settle_ms`, `quiet_seconds`, `snippet_chars`, `markdown` / `fold` / `max_messages`, `replies` / `reply_to_latest` / `allowed_user_ids` / `read_lines`, `accept_files` / `inbox_days` / `max_file_mb`, and `proxy` / `api_base` if you need to reach Telegram through something else.
 
 To use the bot in a group rather than a private chat, disable its privacy mode in @BotFather (`/setprivacy`) — and note that everyone in that group can then drive your agents unless you set `allowed_user_ids`.
 
@@ -102,6 +102,8 @@ A few behaviours of the surrounding systems are worth writing down, because each
 - **Telegram rejects messages over 4096 characters** rather than splitting them the way the client does when you paste a wall of text. Splitting therefore happens here, and every part maps back to the same agent.
 - **Telegram won't nest a code block inside a blockquote** — the client ends the quote, emits the block, then opens a fresh one, so one reply arrives as several separately-collapsing pieces. Inside a fold, code and tables use inline monospace instead; `fold = "never"` trades folding away for syntax highlighting and copy buttons.
 - **An untagged `<pre>` gets its language guessed** by the client and highlighted accordingly, which turns a plain table into confetti. Every block therefore carries an explicit tag, `plaintext` included.
+- **herdr infers agent state by reading the terminal, and that flaps.** grok flashes `blocked` for about a second as a conversation starts, and a pane can blink through `idle` mid-turn. Every notification therefore waits `settle_ms` and re-reads the pane before sending, dropping the transition if it did not hold.
+- **grok files sessions under a url-encoded cwd, not a session id**, and herdr reports no session reference for it — so several conversations share a directory, and a brand new one has no transcript until its first reply lands. Picking the newest by mtime hands back the *previous* conversation, so the session is instead pinned by asking the pane's grok process which `events.jsonl` it holds open.
 - **`getUpdates` serves ~24h of backlog on first run.** That is skipped, so the messages you sent the bot while setting up `chat_id` never arrive as prompts.
 
 Logs are in `bridge.log` in the plugin state dir, plus `herdr plugin logs --plugin telegram.bridge`.

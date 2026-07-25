@@ -11,6 +11,8 @@ Telegram routes back to that pane — see bot.py, the poller this hook keeps ali
 import glob
 import json
 import os
+import re
+import subprocess
 import sys
 import time
 import urllib.parse
@@ -89,15 +91,55 @@ def last_reply(path: str) -> str:
     return ""
 
 
-def last_reply_grok(cwd: str) -> str:
+GROK_SESSION = re.compile(r"(/[^\s]*/\.grok/sessions/[^/\s]+/[0-9a-fA-F][0-9a-fA-F-]{8,})/")
+
+
+def grok_session_dir(pane_id: str, cwd: str) -> str:
+    """Which grok session is this pane in?
+
+    herdr reports no agent_session for grok, and grok files its sessions under a
+    url-encoded *cwd* — so several conversations, and several panes, share one
+    directory and the newest mtime is not necessarily this pane's. Worse, a brand new
+    conversation has no chat_history.jsonl until its first reply lands, so picking by
+    mtime hands back the previous conversation. The running grok process holds its own
+    events.jsonl open, which identifies the session exactly.
+    """
+    if not pane_id:
+        return ""
+    info, err = tg.herdr_json("pane", "process-info", "--pane", pane_id, timeout=10)
+    if err:
+        tg.log(f"grok: process-info failed for {pane_id}: {err}")
+        return ""
+    for proc in info.get("process_info", {}).get("foreground_processes", []):
+        pid = proc.get("pid")
+        if not isinstance(pid, int):
+            continue
+        try:
+            out = subprocess.run(["lsof", "-p", str(pid)], capture_output=True, timeout=10, check=False)
+        except Exception as e:
+            tg.log(f"grok: lsof failed: {e!r}")
+            return ""
+        found = GROK_SESSION.search(out.stdout.decode(errors="replace"))
+        if found:
+            return found.group(1)
+    return ""
+
+
+def last_reply_grok(cwd: str, pane_id: str = "") -> str:
     """grok stores per-cwd sessions: ~/.grok/sessions/<urlencoded-cwd>/<id>/chat_history.jsonl"""
-    if not cwd:
-        return ""
-    base = os.path.join(os.path.expanduser("~/.grok/sessions"), urllib.parse.quote(cwd, safe=""))
-    dirs = [d for d in glob.glob(os.path.join(base, "*")) if os.path.isdir(d)]
-    if not dirs:
-        return ""
-    hist = os.path.join(max(dirs, key=os.path.getmtime), "chat_history.jsonl")
+    session = grok_session_dir(pane_id, cwd)
+    if not session:
+        # no live process to ask (pane already gone?): fall back to the newest session
+        # under this cwd, which is right whenever only one conversation is in play
+        if not cwd:
+            return ""
+        base = os.path.join(os.path.expanduser("~/.grok/sessions"), urllib.parse.quote(cwd, safe=""))
+        dirs = [d for d in glob.glob(os.path.join(base, "*")) if os.path.isdir(d)]
+        if not dirs:
+            return ""
+        session = max(dirs, key=os.path.getmtime)
+        tg.log(f"grok: no session from process, guessing {os.path.basename(session)} by mtime")
+    hist = os.path.join(session, "chat_history.jsonl")
     for ln in reversed(_tail_lines(hist)):
         try:
             o = json.loads(ln)
@@ -200,9 +242,9 @@ def last_reply_opencode(session_id: str) -> str:
     return ""
 
 
-def reply_snippet(agent: str, session: dict, cwd: str) -> str:
+def reply_snippet(agent: str, session: dict, cwd: str, pane_id: str = "") -> str:
     if agent == "grok":
-        return last_reply_grok(cwd)
+        return last_reply_grok(cwd, pane_id)
     if agent == "kimi":
         return last_reply_kimi(session.get("value", ""))
     if agent == "hermes":
@@ -293,6 +335,29 @@ def ensure_bot(cfg: dict) -> None:
         tg.spawn_bot()
 
 
+def settled(pane_id: str, status: str, cfg: dict) -> bool:
+    """Has the pane really reached `status`, or is this a flap?
+
+    herdr infers agent state by reading the terminal, and some CLIs blink through a
+    state mid-turn: grok flashes `blocked` for about a second while it starts up, which
+    used to fire a notification before the agent had even been asked anything. Waiting a
+    moment and re-reading the pane costs a few seconds of latency and removes the whole
+    class of spurious pushes.
+    """
+    wait = int(cfg.get("settle_ms", 4000)) / 1000
+    if wait <= 0:
+        return True
+    time.sleep(wait)
+    now = agent_info(pane_id).get("agent_status", "")
+    if not now or now == status:
+        return True  # unchanged, or we can't tell — don't drop a real notification
+    # `done` is terminal; herdr reports the pane as idle once it has been observed
+    if status == "done" and now in ("idle", "done"):
+        return True
+    tg.log(f"unsettled: {pane_id} was {status}, now {now} — skipping")
+    return False
+
+
 def swap_last_status(pane_id: str, status: str) -> str:
     """Record this pane's status and return the previous one ("" if unseen)."""
     seen = tg.read_state("last_status.json", {})
@@ -363,6 +428,9 @@ def main() -> None:
     agents = cfg.get("agents", [])
     if agents and (event.get("agent") or "") not in agents:
         return
+    # confirm before the debounce is stamped, so a flap doesn't suppress the real one
+    if not settled(pane_id, status, cfg):
+        return
     if recently_sent(f"{pane_id}:{status}", int(cfg.get("quiet_seconds", 5))):
         tg.log(f"debounced pane={pane_id} status={status}")
         return
@@ -371,7 +439,8 @@ def main() -> None:
     cwd = info.get("cwd") or info.get("foreground_cwd") or ""
     folder = tg.short_home(cwd)
     title = info.get("terminal_title_stripped") or title
-    reply = tidy(reply_snippet(event.get("agent") or "", info.get("agent_session") or {}, cwd))
+    reply = tidy(reply_snippet(event.get("agent") or "", info.get("agent_session") or {},
+                               cwd, pane_id))
 
     # one line, so a phone's notification preview spends its few lines on the reply
     # rather than on metadata. ✅/❓ already says done/blocked; the word is redundant.
