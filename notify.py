@@ -3,34 +3,28 @@
 
 Invoked by herdr with the event payload in HERDR_PLUGIN_EVENT_JSON.
 Config lives in <plugin config dir>/config.toml (see config.example.toml).
+
+Every notification is recorded against the agent it describes, so replying to it in
+Telegram routes back to that pane — see bot.py, the poller this hook keeps alive.
 """
 
 import glob
 import json
 import os
-import subprocess
 import sys
 import time
-import tomllib
 import urllib.parse
-import urllib.request
 
-STATE_DIR = os.environ.get("HERDR_PLUGIN_STATE_DIR") or os.path.dirname(os.path.abspath(__file__))
-CONFIG_DIR = os.environ.get("HERDR_PLUGIN_CONFIG_DIR") or os.path.dirname(os.path.abspath(__file__))
-LOG_PATH = os.path.join(STATE_DIR, "notify.log")
-
-STATUS_EMOJI = {"done": "✅", "blocked": "❓", "idle": "💤", "working": "⏳", "unknown": "❔"}
+import tg
 
 
 def agent_info(pane_id: str) -> dict:
     """Enrich via `herdr agent get`: cwd, terminal title, session ref."""
-    herdr = os.environ.get("HERDR_BIN_PATH", "herdr")
-    try:
-        out = subprocess.run([herdr, "agent", "get", pane_id], capture_output=True, timeout=10, check=False)
-        return json.loads(out.stdout.decode()).get("result", {}).get("agent", {})
-    except Exception as e:
-        log(f"agent get failed for {pane_id}: {e!r}")
+    result, err = tg.herdr_json("agent", "get", pane_id, timeout=10)
+    if err:
+        tg.log(f"agent get failed for {pane_id}: {err}")
         return {}
+    return result.get("agent", {})
 
 
 def session_file(agent: str, session: dict) -> str:
@@ -163,7 +157,7 @@ def last_reply_hermes(session_id: str) -> str:
         db.close()
         return (row[0] if row else "").strip()
     except Exception as e:
-        log(f"hermes db read failed: {e!r}")
+        tg.log(f"hermes db read failed: {e!r}")
         return ""
 
 
@@ -202,7 +196,7 @@ def last_reply_opencode(session_id: str) -> str:
                 return "\n".join(texts)
         db.close()
     except Exception as e:
-        log(f"opencode db read failed: {e!r}")
+        tg.log(f"opencode db read failed: {e!r}")
     return ""
 
 
@@ -219,77 +213,94 @@ def reply_snippet(agent: str, session: dict, cwd: str) -> str:
     return last_reply(sf) if sf else ""
 
 
-def log(msg: str) -> None:
-    os.makedirs(STATE_DIR, exist_ok=True)
-    with open(LOG_PATH, "a", encoding="utf-8") as f:
-        f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}\n")
+CHUNK_CHARS = 3600  # Telegram caps a message at 4096; leave room for the header
+FOLD_OVER = 280     # shorter replies read better inline than behind an expander
 
 
-def load_config() -> dict | None:
-    path = os.path.join(CONFIG_DIR, "config.toml")
-    try:
-        with open(path, "rb") as f:
-            return tomllib.load(f)
-    except FileNotFoundError:
-        log(f"no config at {path}; skipping")
-        return None
-    except tomllib.TOMLDecodeError as e:
-        log(f"bad config {path}: {e}")
-        return None
-
-
-def send_telegram(cfg: dict, text: str) -> None:
-    token, chat_id = cfg.get("bot_token", ""), str(cfg.get("chat_id", ""))
-    if not token or not chat_id or "REPLACE" in token or "REPLACE" in chat_id:
-        log("bot_token/chat_id not set; skipping send")
+def send_message(cfg: dict, text: str, plain: str | None = None, target: dict | None = None) -> None:
+    """Send one message. `plain` enables HTML rendering with itself as the fallback, so
+    a bug in the markdown renderer degrades to unformatted text instead of losing the
+    notification entirely."""
+    chat = tg.chat_id(cfg)
+    if not chat:
+        tg.log("chat_id not set; skipping send")
         return
-    base = cfg.get("api_base", "https://api.telegram.org").rstrip("/")
-    url = f"{base}/bot{token}/sendMessage"
-    # curl first: empirically the only reliably working TLS path on this box
-    # (python/OpenSSL handshakes to api.telegram.org get reset intermittently).
-    cmd = ["curl", "-sm", "15", url, "-d", f"chat_id={chat_id}", "--data-urlencode", f"text={text}"]
-    proxy = cfg.get("proxy", "")
-    if proxy:
-        cmd[1:1] = ["-x", proxy]
-    last_err = None
-    for attempt in range(3):
-        try:
-            out = subprocess.run(cmd, capture_output=True, timeout=20, check=False)
-            body = json.loads(out.stdout.decode() or "{}")
-            if body.get("ok"):
-                log(f"sent ok: {text!r}")
-                return
-            last_err = f"curl exit={out.returncode} body={out.stdout[:200]!r}"
-        except Exception as e:
-            last_err = repr(e)
-        time.sleep(1 + attempt)
-    # fallback: urllib with system proxy
-    try:
-        data = urllib.parse.urlencode({"chat_id": chat_id, "text": text}).encode()
-        with urllib.request.urlopen(urllib.request.Request(url, data=data), timeout=15) as resp:
-            body = json.loads(resp.read().decode())
-            log(f"sent ok={body.get('ok')} (urllib fallback): {text!r}")
-            return
-    except Exception as e:
-        last_err = f"{last_err}; urllib: {e!r}"
-    log(f"send failed: {last_err}: {text!r}")
+    params = {"chat_id": chat, "text": text, "link_preview_options": '{"is_disabled":true}'}
+    if plain is not None:
+        params["parse_mode"] = "HTML"
+    result, err = tg.api(cfg, "sendMessage", params)
+    if err and plain is not None and ("parse" in err.lower() or "entit" in err.lower()):
+        tg.log(f"HTML rejected ({err[-160:]}); resending as plain text")
+        params.pop("parse_mode")
+        params["text"] = plain[:4000]
+        result, err = tg.api(cfg, "sendMessage", params)
+    if err:
+        tg.log(f"send failed: {err}: {text[:120]!r}")
+        return
+    tg.log(f"sent ok ({len(text)} chars)")
+    if target:
+        tg.remember_target((result or {}).get("message_id"), target,
+                           int(cfg.get("msg_map_limit", tg.MSG_MAP_LIMIT)))
+
+
+def tidy(text: str) -> str:
+    """Trim trailing spaces and collapse blank-line runs, keeping the markdown shape."""
+    out: list[str] = []
+    for line in text.strip().split("\n"):
+        line = line.rstrip()
+        if not line and out and not out[-1]:
+            continue
+        out.append(line)
+    return "\n".join(out)
+
+
+def send_notification(cfg: dict, header: str, reply: str, target: dict) -> None:
+    """One notification, split across as many messages as the reply needs. Every chunk
+    is mapped back to the same agent, so replying to any of them routes correctly."""
+    limit = int(cfg.get("snippet_chars", 0))
+    if limit > 0 and len(reply) > limit:
+        reply = reply[:limit].rstrip() + "…"
+
+    if not cfg.get("markdown", True):
+        flat = " ".join(reply.split())
+        send_message(cfg, f"{header}\n{flat}"[:4000] if flat else header, target=target)
+        return
+    if not reply:
+        send_message(cfg, tg.escape_html(header), plain=header, target=target)
+        return
+
+    chunks = tg.split_markdown(reply, CHUNK_CHARS)
+    cap = max(1, int(cfg.get("max_messages", 8)))
+    trimmed = max(0, len(chunks) - cap)
+    chunks = chunks[:cap]
+    fold = str(cfg.get("fold", "auto")).lower()
+    for i, chunk in enumerate(chunks):
+        folded = fold != "never" and (len(chunk) > FOLD_OVER or "\n" in chunk.strip())
+        body = tg.md_to_html(chunk, block_code=not folded)
+        if folded:
+            body = f"<blockquote expandable>{body}</blockquote>"
+        if trimmed and i == len(chunks) - 1:
+            body += f"\n<i>(+{trimmed} more part{'s' if trimmed > 1 else ''} trimmed)</i>"
+        head = tg.escape_html(header) if i == 0 else f"⋯ {i + 1}/{len(chunks)}"
+        plain = f"{header}\n{chunk}" if i == 0 else chunk
+        send_message(cfg, f"{head}\n{body}", plain=plain, target=target)
+
+
+def ensure_bot(cfg: dict) -> None:
+    """Keep the reply poller alive. The manifest's [[startup]] hook starts it with herdr;
+    this is the safety net for a poller that died or a plugin enabled mid-session."""
+    if cfg.get("replies", True) and tg.chat_id(cfg):
+        tg.spawn_bot()
 
 
 def swap_last_status(pane_id: str, status: str) -> str:
     """Record this pane's status and return the previous one ("" if unseen)."""
-    path = os.path.join(STATE_DIR, "last_status.json")
-    try:
-        with open(path, encoding="utf-8") as f:
-            seen = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        seen = {}
+    seen = tg.read_state("last_status.json", {})
     prev = seen.get(pane_id, "")
     if len(seen) > 500:
         seen = {}
     seen[pane_id] = status
-    os.makedirs(STATE_DIR, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(seen, f)
+    tg.write_state("last_status.json", seen)
     return prev
 
 
@@ -297,86 +308,78 @@ def recently_sent(key: str, quiet_seconds: int) -> bool:
     """Debounce: skip if the same pane+status fired within quiet_seconds."""
     if quiet_seconds <= 0:
         return False
-    path = os.path.join(STATE_DIR, "last_sent.json")
     now = time.time()
-    try:
-        with open(path, encoding="utf-8") as f:
-            seen = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        seen = {}
+    seen = tg.read_state("last_sent.json", {})
     last = seen.get(key, 0)
     seen = {k: v for k, v in seen.items() if now - v < 3600}
     seen[key] = now
-    os.makedirs(STATE_DIR, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(seen, f)
+    tg.write_state("last_sent.json", seen)
     return now - last < quiet_seconds
 
 
 def main() -> None:
-    cfg = load_config()
+    cfg = tg.load_config()
 
     if "--test" in sys.argv:
         if cfg is None:
-            print(f"config.toml not found in {CONFIG_DIR}", file=sys.stderr)
+            print(f"config.toml not found in {tg.CONFIG_DIR}", file=sys.stderr)
             sys.exit(1)
-        send_telegram(cfg, "tg.notify test message from herdr 🔔")
+        send_message(cfg, "tg.notify test message from herdr 🔔")
+        ensure_bot(cfg)
         return
 
     raw = os.environ.get("HERDR_PLUGIN_EVENT_JSON", "")
     if not raw:
-        log("no HERDR_PLUGIN_EVENT_JSON; exiting")
+        tg.log("no HERDR_PLUGIN_EVENT_JSON; exiting")
         return
     try:
         event = json.loads(raw)
     except json.JSONDecodeError as e:
-        log(f"bad event json: {e}")
+        tg.log(f"bad event json: {e}")
         return
     # payload shape: {"event": "pane_agent_status_changed", "data": {...fields...}}
     if isinstance(event.get("data"), dict):
         event = event["data"]
     if os.environ.get("TG_NOTIFY_DEBUG") or "agent_status" not in event:
-        log(f"raw event: {raw[:500]}")
+        tg.log(f"raw event: {raw[:500]}")
 
     status = event.get("agent_status", "unknown")
     pane_id = event.get("pane_id", "?")
     agent = event.get("display_agent") or event.get("agent") or "agent"
     title = event.get("title") or ""
-    log(f"event: pane={pane_id} agent={agent} status={status}")
+    tg.log(f"event: pane={pane_id} agent={agent} status={status}")
 
     if cfg is None:
         return
+    ensure_bot(cfg)
     # herdr only reports "done" for unfocused panes (attention semantics); a
     # focused pane goes working->idle directly. Treat that as done too.
     prev = swap_last_status(pane_id, status)
     if status == "idle" and prev == "working":
         status = "done"
-        log(f"working->idle on {pane_id}: treating as done (focused completion)")
+        tg.log(f"working->idle on {pane_id}: treating as done (focused completion)")
     if status not in cfg.get("statuses", ["done"]):
         return
     agents = cfg.get("agents", [])
     if agents and (event.get("agent") or "") not in agents:
         return
     if recently_sent(f"{pane_id}:{status}", int(cfg.get("quiet_seconds", 5))):
-        log(f"debounced pane={pane_id} status={status}")
+        tg.log(f"debounced pane={pane_id} status={status}")
         return
 
     info = agent_info(pane_id)
     cwd = info.get("cwd") or info.get("foreground_cwd") or ""
-    folder = cwd.replace(os.path.expanduser("~"), "~") if cwd else ""
+    folder = tg.short_home(cwd)
     title = info.get("terminal_title_stripped") or title
-    snippet = " ".join(reply_snippet(event.get("agent") or "", info.get("agent_session") or {}, cwd).split())
-    limit = int(cfg.get("snippet_chars", 150))
-    if len(snippet) > limit:
-        snippet = snippet[:limit] + "…"
+    reply = tidy(reply_snippet(event.get("agent") or "", info.get("agent_session") or {}, cwd))
 
-    emoji = STATUS_EMOJI.get(status, "")
-    lines = [f"{emoji} {agent} {status} · {folder or pane_id}"]
-    if title:
-        lines.append(f"📝 {title}")
-    if snippet:
-        lines.append(f"💬 {snippet}")
-    send_telegram(cfg, "\n".join(lines))
+    # one line, so a phone's notification preview spends its few lines on the reply
+    # rather than on metadata. ✅/❓ already says done/blocked; the word is redundant.
+    emoji = tg.STATUS_EMOJI.get(status, "")
+    head = " · ".join(p for p in (f"{emoji} {agent}".strip(), folder or pane_id,
+                                  title[:int(cfg.get("title_chars", 48))]) if p)
+    send_notification(cfg, head, reply,
+                      {"pane": pane_id, "agent": agent, "folder": folder})
 
 
 if __name__ == "__main__":

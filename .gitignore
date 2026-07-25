@@ -1,5 +1,10 @@
 __pycache__/
 config.toml
 *.log
+*.log.1
 last_sent.json
 last_status.json
+msg_targets.json
+current_target.json
+bot_offset.json
+bot.lock

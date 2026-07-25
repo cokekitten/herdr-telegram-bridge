@@ -1,9 +1,14 @@
 id = "tg.notify"
 name = "Telegram Notify"
-version = "0.1.0"
+version = "0.2.0"
 min_herdr_version = "0.7.0"
-description = "Push a Telegram message when an agent reaches done/blocked."
+description = "Telegram push when an agent is done or blocked — reply to it and your text goes back into the agent."
 platforms = ["macos", "linux"]
+
+# Starts the reply poller with herdr. It spawns a detached process and returns
+# immediately, so it never delays startup. The event hook below re-checks it.
+[[startup]]
+command = ["python3", "bot.py", "--ensure"]
 
 [[events]]
 on = "pane.agent_status_changed"
@@ -14,3 +19,15 @@ id = "test"
 title = "Send Telegram test message"
 contexts = ["pane", "workspace"]
 command = ["python3", "notify.py", "--test"]
+
+[[actions]]
+id = "bot-status"
+title = "Telegram replies: poller status"
+contexts = ["pane", "workspace"]
+command = ["python3", "bot.py", "--status"]
+
+[[actions]]
+id = "bot-restart"
+title = "Telegram replies: restart poller"
+contexts = ["pane", "workspace"]
+command = ["python3", "bot.py", "--restart"]

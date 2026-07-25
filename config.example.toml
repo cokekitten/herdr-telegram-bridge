@@ -16,8 +16,78 @@ statuses = ["done", "blocked"]
 # Skip repeat pushes for the same pane+status within this many seconds.
 quiet_seconds = 5
 
-# Max characters of the agent's final reply included in the message.
-snippet_chars = 150
+# Max characters of the agent's final reply to include. 0 = the whole thing, split
+# across as many messages as it takes (Telegram caps one message at 4096 characters
+# and rejects anything longer — it does not split for you).
+snippet_chars = 0
+
+# Render the reply as markdown. Telegram only accepts b/i/u/s/code/pre/a/blockquote,
+# so headings become bold, lists become bullets, and tables become monospaced blocks.
+# A reply longer than a couple of lines goes in an expandable quote — tap to unfold —
+# so a chatty agent doesn't flood the chat. false sends flat, unformatted text.
+markdown = true
+
+# Characters of the pane title kept in the header line. The header is one line —
+# status icon, agent, folder, title — so a phone's notification preview spends its
+# few visible lines on the reply instead of on metadata.
+title_chars = 48
+
+# Hard cap on how many messages a single notification may span.
+max_messages = 8
+
+# How a long reply is presented.
+#   "auto"  — fold it into an expandable quote. Telegram won't nest a code block inside
+#             a quote (it cuts the quote short and starts a new one), so inside a fold
+#             code and tables use inline monospace: one tidy block, no highlighting.
+#   "never" — no folding. Code blocks keep syntax highlighting and a copy button, and a
+#             long reply is simply long.
+fold = "auto"
+
+# How many sent messages stay routable. The map is rewritten whole on every send, so it
+# is capped; replying to something older than this reports an error rather than guessing
+# an agent. Raise it if you reply to old notifications.
+msg_map_limit = 1000
+
+# --- replies -----------------------------------------------------------------
+
+# Read Telegram replies and feed them back into the agent they came from.
+# Set to false to keep notifications one-way (then no poller process runs).
+replies = true
+
+# Where a message that isn't a reply goes: true = the most recently active agent,
+# false = nowhere, so you always have to reply to a notification or use /agents.
+reply_to_latest = true
+
+# Extra allowlist on top of chat_id: only these Telegram user ids may drive agents.
+# Empty or omitted = anyone in the configured chat (i.e. just you, in a private chat).
+# allowed_user_ids = [123456789]
+
+# Default number of terminal lines /read returns.
+read_lines = 40
+
+# `herdr agent prompt` writes the text and the Enter in one burst. A busy agent queues
+# that fine, but an idle Claude Code folds the Enter into its paste detection and leaves
+# the text sitting in the input box. So if the agent hasn't started working after
+# submit_wait_ms, press Enter once more. Turn off if your agent double-submits.
+submit_fallback = true
+submit_wait_ms = 2500
+
+# --- attachments -------------------------------------------------------------
+
+# Accept photos and files sent to the bot. herdr's injection channel is text only, so
+# the file is saved to <state dir>/inbox/ and the agent is handed its absolute path,
+# preceded by the caption when there is one. false replies that they're turned off.
+accept_files = true
+
+# Delete inbox files older than this many days. The poller sweeps every 6 hours and on
+# startup. 0 keeps everything forever.
+inbox_days = 7
+
+# Refuse anything larger. Telegram bots cannot fetch files above 20 MB at all, so this
+# only ever lowers the ceiling.
+max_file_mb = 20
+
+# --- network -----------------------------------------------------------------
 
 # Optional: proxy for reaching api.telegram.org, e.g. "http://127.0.0.1:7890"
 # proxy = ""
