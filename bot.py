@@ -268,7 +268,10 @@ def handle_attachment(cfg: dict, chat: int, msg_id, reply_to, msg: dict) -> None
     tg.log(f"bot: saved {dest} ({os.path.getsize(dest)} bytes)")
 
     caption = (msg.get("caption") or "").strip()
-    err = submit(cfg, target["pane"], f"{caption}\n{dest}" if caption else dest)
+    prompt = f"{caption}\n{dest}" if caption else dest
+    tg.log(f"bot: prompting {target['pane']} with {saved}"
+           f"{f' + caption ({len(caption)} chars)' if caption else ' (no caption)'}")
+    err = submit(cfg, target["pane"], prompt)
     if err:
         say(cfg, chat, f"⚠️ {tg.label(target)}: {err}", reply_to=msg_id)
         return
