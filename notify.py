@@ -164,8 +164,8 @@ def last_reply_grok(cwd: str, pane_id: str = "") -> str:
     return ""
 
 
-def last_reply_kimi(session_id: str) -> str:
-    """kimi-code: session_index.jsonl maps id -> dir; text lives in wire.jsonl content.part events."""
+def kimi_wire(session_id: str) -> str:
+    """kimi-code: session_index.jsonl maps a session id to its directory."""
     idx = os.path.expanduser("~/.kimi-code/session_index.jsonl")
     sdir = ""
     for ln in _tail_lines(idx):
@@ -179,7 +179,14 @@ def last_reply_kimi(session_id: str) -> str:
         return ""
     wires = sorted(glob.glob(os.path.join(sdir, "agents", "*", "wire.jsonl")))
     main_wire = os.path.join(sdir, "agents", "main", "wire.jsonl")
-    wire = main_wire if main_wire in wires else (wires[0] if wires else "")
+    return main_wire if main_wire in wires else (wires[0] if wires else "")
+
+
+def last_reply_kimi(session_id: str) -> str:
+    """kimi text lives in wire.jsonl content.part events."""
+    wire = kimi_wire(session_id)
+    if not wire:
+        return ""
     for ln in reversed(_tail_lines(wire)):
         try:
             o = json.loads(ln)
@@ -258,11 +265,71 @@ def last_reply_opencode(session_id: str) -> str:
 SYNTHETIC = ("<instructions>", "<user_info>", "<system-reminder>", "<environment", "agents.md")
 
 
+def _usable_prompt(text: str) -> str:
+    """Collapse a candidate first message, or "" if it is machine-generated context."""
+    text = " ".join((text or "").split())
+    if not text or text[0] in "<#" or any(s in text[:200].lower() for s in SYNTHETIC):
+        return ""
+    return text
+
+
+def first_prompt_sql(agent: str, session_id: str) -> str:
+    """First human message for the agents that keep transcripts in sqlite."""
+    import sqlite3
+
+    path = os.path.expanduser("~/.hermes/state.db" if agent == "hermes"
+                              else "~/.local/share/opencode/opencode.db")
+    if not session_id or not os.path.isfile(path):
+        return ""
+    try:
+        db = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=3)
+        if agent == "hermes":
+            rows = db.execute(
+                "select content from messages where session_id=? and role='user'"
+                " and content is not null and content != '' order by id asc limit 10",
+                (session_id,),
+            ).fetchall()
+            for (content,) in rows:
+                found = _usable_prompt(content)
+                if found:
+                    return found
+        else:
+            msgs = db.execute(
+                "select id, data from message where session_id=? order by time_created asc limit 20",
+                (session_id,),
+            ).fetchall()
+            for mid, data in msgs:
+                try:
+                    if json.loads(data).get("role") != "user":
+                        continue
+                except Exception:
+                    continue
+                texts = []
+                for (part,) in db.execute(
+                        "select data from part where message_id=? order by time_created", (mid,)):
+                    try:
+                        parsed = json.loads(part)
+                    except Exception:
+                        continue
+                    if parsed.get("type") == "text":
+                        texts.append(parsed.get("text", ""))
+                found = _usable_prompt(" ".join(texts))
+                if found:
+                    return found
+    except Exception as e:
+        tg.log(f"{agent} first-prompt read failed: {e!r}")
+    return ""
+
+
 def first_prompt(agent: str, session: dict, cwd: str, pane_id: str = "") -> str:
     """The first thing the human actually typed in this session, or ""."""
+    if agent in ("hermes", "opencode"):
+        return first_prompt_sql(agent, session.get("value", ""))
     if agent == "grok":
         found = grok_session_dir(pane_id, cwd)
         path = os.path.join(found, "chat_history.jsonl") if found else ""
+    elif agent == "kimi":
+        path = kimi_wire(session.get("value", ""))
     else:
         path = session_file(agent, session)
     if not path:
@@ -275,16 +342,16 @@ def first_prompt(agent: str, session: dict, cwd: str, pane_id: str = "") -> str:
         text = ""
         if o.get("type") == "user" and "message" not in o:  # grok's shape
             text = _texts_from_content(o.get("content"))
+        elif o.get("type") == "turn.prompt":                # kimi's shape
+            text = _texts_from_content(o.get("input"))
         else:
             for holder in (o.get("message"), o.get("payload"), o):
                 if isinstance(holder, dict) and holder.get("role") == "user":
                     text = _texts_from_content(holder.get("content"))
                     break
-        text = " ".join(text.split())
-        head = text[:200].lower()
-        if not text or text[0] in "<#" or any(s in head for s in SYNTHETIC):
-            continue
-        return text
+        found = _usable_prompt(text)
+        if found:
+            return found
     return ""
 
 

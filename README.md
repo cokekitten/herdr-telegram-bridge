@@ -62,7 +62,7 @@ No relay server, no tunnel, no port to open, no companion app. The plugin makes 
 
 Anything else still notifies and still takes replies — just without the transcript excerpt.
 
-Not every CLI sets a useful terminal title: pi shows `π - <user>`, codex shows the directory, a fresh Claude Code shows its own name. When herdr's title says nothing, the session's opening prompt is used instead — skipping the synthetic context (`AGENTS.md` dumps, `<user_info>` blocks) that agents front-load as user messages. A pane that has not been asked anything yet legitimately has no title either way.
+Not every CLI sets a useful terminal title: pi shows `π - <user>`, hermes shows `π - <dir>`, codex shows the directory, a fresh Claude Code shows its own name. When herdr's title says nothing, the session's opening prompt is used instead — skipping the synthetic context (`AGENTS.md` dumps, `<user_info>` blocks) that agents front-load as user messages. A pane that has not been asked anything yet legitimately has no title either way.
 
 ## Install
 
