@@ -265,6 +265,40 @@ def last_reply_opencode(session_id: str) -> str:
 SYNTHETIC = ("<instructions>", "<user_info>", "<system-reminder>", "<environment", "agents.md")
 
 
+OPENCODE_DB = "~/.local/share/opencode/opencode.db"
+
+
+def opencode_session(cwd: str, title: str) -> str:
+    """Find an opencode session when herdr reports none — which it does intermittently,
+    leaving the notification with no body and no title.
+
+    opencode's own database records each session's directory and title, and it names the
+    terminal "OC | <session title>", so the pane usually matches exactly. Falling back to
+    the newest session in the directory is a guess: 68 of them share one directory here.
+    """
+    import sqlite3
+
+    path = os.path.expanduser(OPENCODE_DB)
+    if not cwd or not os.path.isfile(path):
+        return ""
+    wanted = title.split("|", 1)[1].strip() if "|" in title else title.strip()
+    try:
+        db = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=3)
+        if wanted:
+            row = db.execute("select id from session where directory=? and title=?"
+                             " order by time_updated desc limit 1", (cwd, wanted)).fetchone()
+            if row:
+                return row[0]
+        row = db.execute("select id from session where directory=?"
+                         " order by time_updated desc limit 1", (cwd,)).fetchone()
+        if row:
+            tg.log(f"opencode: no title match for {title!r}, using newest session in {cwd}")
+            return row[0]
+    except Exception as e:
+        tg.log(f"opencode session lookup failed: {e!r}")
+    return ""
+
+
 def _usable_prompt(text: str) -> str:
     """Collapse a candidate first message, or "" if it is machine-generated context."""
     text = " ".join((text or "").split())
@@ -321,10 +355,10 @@ def first_prompt_sql(agent: str, session_id: str) -> str:
     return ""
 
 
-def first_prompt(agent: str, session: dict, cwd: str, pane_id: str = "") -> str:
+def first_prompt(agent: str, session: dict, cwd: str, pane_id: str = "", title: str = "") -> str:
     """The first thing the human actually typed in this session, or ""."""
     if agent in ("hermes", "opencode"):
-        return first_prompt_sql(agent, session.get("value", ""))
+        return first_prompt_sql(agent, resolve_session(agent, session, cwd, title))
     if agent == "grok":
         found = grok_session_dir(pane_id, cwd)
         path = os.path.join(found, "chat_history.jsonl") if found else ""
@@ -372,11 +406,19 @@ def display_title(info: dict, agent: str, pane_id: str = "") -> str:
     title = (info.get("terminal_title_stripped") or info.get("terminal_title") or "").strip()
     cwd = info.get("cwd") or info.get("foreground_cwd") or ""
     if uninformative(title, cwd, agent):
-        return first_prompt(agent, info.get("agent_session") or {}, cwd, pane_id) or title
+        return first_prompt(agent, info.get("agent_session") or {}, cwd, pane_id, title) or title
     return title
 
 
-def reply_snippet(agent: str, session: dict, cwd: str, pane_id: str = "") -> str:
+def resolve_session(agent: str, session: dict, cwd: str, title: str) -> str:
+    """The session id herdr reported, or one worked out from the agent's own storage."""
+    value = (session or {}).get("value", "")
+    if not value and agent == "opencode":
+        value = opencode_session(cwd, title)
+    return value
+
+
+def reply_snippet(agent: str, session: dict, cwd: str, pane_id: str = "", title: str = "") -> str:
     if agent == "grok":
         return last_reply_grok(cwd, pane_id)
     if agent == "kimi":
@@ -384,7 +426,7 @@ def reply_snippet(agent: str, session: dict, cwd: str, pane_id: str = "") -> str
     if agent == "hermes":
         return last_reply_hermes(session.get("value", ""))
     if agent == "opencode":
-        return last_reply_opencode(session.get("value", ""))
+        return last_reply_opencode(resolve_session(agent, session, cwd, title))
     sf = session_file(agent, session)
     return last_reply(sf) if sf else ""
 
@@ -574,7 +616,7 @@ def main() -> None:
     folder = tg.short_home(cwd)
     title = display_title(info, event.get("agent") or "", pane_id) or title
     reply = tidy(reply_snippet(event.get("agent") or "", info.get("agent_session") or {},
-                               cwd, pane_id))
+                               cwd, pane_id, info.get("terminal_title_stripped") or ""))
 
     # one line, so a phone's notification preview spends its few lines on the reply
     # rather than on metadata. ✅/❓ already says done/blocked; the word is redundant.

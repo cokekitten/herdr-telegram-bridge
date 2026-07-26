@@ -55,7 +55,7 @@ No relay server, no tunnel, no port to open, no companion app. The plugin makes 
 | claude (Claude Code) | `~/.claude/projects/*/<session>.jsonl` |
 | codex | `~/.codex/sessions/…/rollout-*.jsonl` |
 | pi | session path reported by herdr |
-| opencode | `~/.local/share/opencode/opencode.db` |
+| opencode | `~/.local/share/opencode/opencode.db`, session matched by directory + title when herdr reports none |
 | grok | `~/.grok/sessions/<cwd>/…/chat_history.jsonl`, session pinned via the pane's process |
 | kimi (Kimi Code) | `~/.kimi-code/sessions/…/wire.jsonl` |
 | hermes | `~/.hermes/state.db` |
