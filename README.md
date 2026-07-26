@@ -96,7 +96,7 @@ To use the bot in a group rather than a private chat, disable its privacy mode i
 
 Telegram cannot push to a laptop, so `bot.py` long-polls `getUpdates` as a detached singleton. The manifest's `[[startup]]` hook launches it with herdr, the status-change hook re-checks it on every agent transition so a dead poller comes back by itself, and a `flock` keeps exactly one alive. Two actions in herdr's plugin menu — **poller status** and **restart poller** — cover the rest (`python3 bot.py --status|--restart|--stop`).
 
-Routing is a `message id → pane` map recorded as each notification is sent, capped at `msg_map_limit` entries. Replying to something older than the cap reports an error rather than quietly retargeting whichever agent happens to be current.
+Routing is a `message id → pane` map recorded as each notification is sent, capped at `msg_map_limit` entries. Replying to something older than the cap reports an error rather than quietly retargeting whichever agent happens to be current — as does replying to an agent whose pane has since been closed. Nothing is ever redirected on your behalf.
 
 A few behaviours of the surrounding systems are worth writing down, because each one caused a bug:
 

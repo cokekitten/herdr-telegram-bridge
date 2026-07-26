@@ -117,6 +117,19 @@ def agent_keyboard(cfg: dict, agents: list) -> list:
     return rows
 
 
+GONE = ("not found", "agent_not_found", "pane_not_found", "invalid pane")
+
+
+def report_failure(cfg: dict, chat: int, msg_id, target: dict, err: str) -> None:
+    """A closed pane is the common case and deserves plain language — herdr's own
+    "agent target w1:p18 not found" is accurate but says nothing about what to do."""
+    if any(m in err.lower() for m in GONE):
+        say(cfg, chat, f"🚪 {tg.label(target)} is gone — that pane has been closed.\n"
+                       "Pick another agent with /agents.", reply_to=msg_id)
+    else:
+        say(cfg, chat, f"⚠️ {tg.label(target)}: {err}", reply_to=msg_id)
+
+
 def agent_status(pane: str) -> str:
     info, err = tg.herdr_json("agent", "get", pane, timeout=10)
     return "" if err else info.get("agent", {}).get("agent_status", "")
@@ -228,7 +241,7 @@ def handle_command(cfg: dict, chat: int, msg_id, text: str, target: dict) -> Non
         lines = parts[1] if len(parts) > 1 and parts[1].isdigit() else str(cfg.get("read_lines", 40))
         out, err = tg.herdr_run("agent", "read", target["pane"], "--lines", lines, "--format", "text")
         if err:
-            say(cfg, chat, f"⚠️ {tg.label(target)}: {err}", reply_to=msg_id)
+            report_failure(cfg, chat, msg_id, target, err)
             return
         body = out.strip() or "(no output)"
         if len(body) > TELEGRAM_TEXT_LIMIT:
@@ -241,8 +254,10 @@ def handle_command(cfg: dict, chat: int, msg_id, text: str, target: dict) -> Non
 
     if cmd == "/esc":
         _, err = tg.herdr_run("agent", "send-keys", target["pane"], "esc")
-        done = f"⚠️ {tg.label(target)}: {err}" if err else f"⎋ escape sent to {tg.label(target)}"
-        say(cfg, chat, done, target=target, reply_to=msg_id)
+        if err:
+            report_failure(cfg, chat, msg_id, target, err)
+            return
+        say(cfg, chat, f"⎋ escape sent to {tg.label(target)}", target=target, reply_to=msg_id)
         return
 
     say(cfg, chat, f"❓ unknown command {cmd} — try /help", reply_to=msg_id)
@@ -302,7 +317,7 @@ def handle_attachment(cfg: dict, chat: int, msg_id, reply_to, msg: dict) -> None
            f"{f' + caption ({len(caption)} chars)' if caption else ' (no caption)'}")
     err = submit(cfg, target["pane"], prompt)
     if err:
-        say(cfg, chat, f"⚠️ {tg.label(target)}: {err}", reply_to=msg_id)
+        report_failure(cfg, chat, msg_id, target, err)
         return
     tg.set_current_target(target)
     say(cfg, chat, f"📎 {saved} → {tg.label(target)}", target=target, reply_to=msg_id)
@@ -334,7 +349,7 @@ def handle_message(cfg: dict, msg: dict) -> None:
     err = submit(cfg, target["pane"], text)
     if err:
         tg.log(f"bot: prompt {target['pane']} failed: {err}")
-        say(cfg, chat, f"⚠️ {tg.label(target)}: {err}", reply_to=msg_id)
+        report_failure(cfg, chat, msg_id, target, err)
         return
     tg.set_current_target(target)
     tg.log(f"bot: prompted {target['pane']} ({len(text)} chars)")
