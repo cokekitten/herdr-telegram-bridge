@@ -5,29 +5,34 @@ min_herdr_version = "0.7.0"
 description = "Drive your herdr agents from Telegram: push on done/blocked, reply to send text or files straight back in."
 platforms = ["macos", "linux"]
 
+# herdr's server PATH doesn't include /opt/homebrew/bin, so bare `python3`
+# resolves to the system Python (3.9) which lacks tomllib (3.11+). Prepend
+# the Homebrew bin dir via env(1) so python3 resolves correctly on this
+# machine while staying portable to other layouts (linux, /usr/local).
+
 # Starts the reply poller with herdr. It spawns a detached process and returns
 # immediately, so it never delays startup. The event hook below re-checks it.
 [[startup]]
-command = ["python3", "bot.py", "--ensure"]
+command = ["/usr/bin/env", "PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin", "python3", "bot.py", "--ensure"]
 
 [[events]]
 on = "pane.agent_status_changed"
-command = ["python3", "notify.py"]
+command = ["/usr/bin/env", "PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin", "python3", "notify.py"]
 
 [[actions]]
 id = "test"
 title = "Send Telegram test message"
 contexts = ["pane", "workspace"]
-command = ["python3", "notify.py", "--test"]
+command = ["/usr/bin/env", "PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin", "python3", "notify.py", "--test"]
 
 [[actions]]
 id = "bot-status"
 title = "Telegram replies: poller status"
 contexts = ["pane", "workspace"]
-command = ["python3", "bot.py", "--status"]
+command = ["/usr/bin/env", "PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin", "python3", "bot.py", "--status"]
 
 [[actions]]
 id = "bot-restart"
 title = "Telegram replies: restart poller"
 contexts = ["pane", "workspace"]
-command = ["python3", "bot.py", "--restart"]
+command = ["/usr/bin/env", "PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin", "python3", "bot.py", "--restart"]
